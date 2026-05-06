@@ -82,7 +82,7 @@
             position: absolute;
             bottom: 6rem;
             right: 2rem;
-            width: 240px;
+            width: 260px;
             opacity: 0;
             transition: opacity 2s ease;
         }
@@ -155,6 +155,16 @@
             border-right: 1px solid rgba(255, 255, 255, 0.1);
             z-index: 2;
         }
+
+        .loading-shimmer {
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.05), transparent);
+            background-size: 200% 100%;
+            animation: shimmer 1.5s infinite;
+        }
+        @keyframes shimmer {
+            0% { background-position: -200% 0; }
+            100% { background-position: 200% 0; }
+        }
     </style>
 </head>
 <body>
@@ -178,13 +188,18 @@
     <div id="ui-layer">
         <div id="data-hud" class="glass-panel p-8 rounded-3xl">
             <div class="space-y-6">
-                <div>
-                    <span class="text-[8px] font-mono uppercase text-gray-500 tracking-[0.3em] block mb-1">Atmospheric Input</span>
-                    <p id="weather-text" class="text-xl font-extralight text-white tracking-tight">--</p>
+                <div class="flex justify-between items-start">
+                    <div>
+                        <span class="text-[8px] font-mono uppercase text-gray-500 tracking-[0.3em] block mb-1">Atmospheric Input</span>
+                        <p id="weather-text" class="text-xl font-extralight text-white tracking-tight">--</p>
+                    </div>
+                    <button id="synth-btn" class="text-[9px] border border-white/20 px-3 py-1 rounded-full hover:bg-white hover:text-black transition-all flex items-center gap-2">
+                        <span>✨ SYNTHESIZE</span>
+                    </button>
                 </div>
                 <div>
                     <span class="text-[8px] font-mono uppercase text-gray-500 tracking-[0.3em] block mb-1">Neural Resonance</span>
-                    <div id="hud-mood" class="text-[11px] font-light text-gray-400 italic tracking-wide">
+                    <div id="hud-mood" class="text-[11px] font-light text-gray-400 italic tracking-wide leading-relaxed">
                         Calibrating telemetry...
                     </div>
                 </div>
@@ -195,7 +210,9 @@
             <div class="space-y-6">
                 <div class="flex items-center justify-between mb-2">
                     <span class="text-[8px] font-mono uppercase text-white tracking-[0.3em]">Console</span>
-                    <i class="ph ph-sliders text-xs text-gray-500"></i>
+                    <button id="oracle-btn" class="text-[9px] bg-indigo-600/40 border border-indigo-400/30 px-3 py-1 rounded-full hover:bg-indigo-500 transition-all">
+                        ✨ SONIC ORACLE
+                    </button>
                 </div>
                 
                 <div>
@@ -229,6 +246,8 @@
     </div>
 
     <script>
+        const apiKey = ""; // Provided by environment
+
         const State = {
             isRunning: false,
             weather: { temp: 20, wind: 5 },
@@ -255,7 +274,8 @@
             // User Controls
             tickerDuration: 180,
             particleCount: 130,
-            mutationSpeed: 0.12
+            mutationSpeed: 0.12,
+            isGenerating: false
         };
 
         const canvas = document.getElementById('art-canvas');
@@ -266,12 +286,134 @@
         const controlPanel = document.getElementById('control-panel');
         const newsTicker = document.getElementById('news-ticker');
         const tickerContent = document.getElementById('ticker-content');
-        const tickerContainer = document.querySelector('.ticker');
+        const hudMood = document.getElementById('hud-mood');
 
         let width, height;
         let particles = [];
 
-        // --- CONTROLS ---
+        // --- GEMINI INTEGRATION ---
+
+        async function geminiFetch(payload, model = "gemini-2.5-flash-preview-09-2025") {
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+            let retries = 0;
+            const backoff = [1000, 2000, 4000, 8000, 16000];
+
+            while (retries < 5) {
+                try {
+                    const response = await fetch(url, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify(payload)
+                    });
+                    if (!response.ok) throw new Error("API Limit");
+                    return await response.json();
+                } catch (e) {
+                    await new Promise(r => setTimeout(r, backoff[retries]));
+                    retries++;
+                }
+            }
+            throw new Error("Gemini Service Unavailable");
+        }
+
+        async function synthesizeWorldState() {
+            if (State.isGenerating || State.news.length === 0) return;
+            State.isGenerating = true;
+            hudMood.classList.add('loading-shimmer');
+            hudMood.innerText = "✨ Synthesizing collective global consciousness...";
+
+            const prompt = `Analyze these news headlines and provide a single JSON object. 
+            Headlines: ${State.news.slice(0, 10).join(". ")}
+            Required Fields:
+            - narrative: (a single poetic 15-word sentence describing the "mood" of the world right now)
+            - sentiment: (a number from -1 to 1, where -1 is chaos/tension and 1 is peace/harmony)
+            - color: (a CSS hue value from 0-360 reflecting this state)`;
+
+            try {
+                const result = await geminiFetch({
+                    contents: [{ parts: [{ text: prompt }] }],
+                    generationConfig: { responseMimeType: "application/json" }
+                });
+
+                const data = JSON.parse(result.candidates[0].content.parts[0].text);
+                State.sentiment = data.sentiment;
+                State.targetHue = data.color;
+                hudMood.innerText = `✨ ${data.narrative}`;
+                
+                // Update system based on AI analysis
+                if (State.sentiment > 0.3) {
+                    State.visMode = 'flow';
+                    State.currentScale = State.scales.calm;
+                } else if (State.sentiment < -0.3) {
+                    State.visMode = 'geometric';
+                    State.currentScale = State.scales.tense;
+                } else {
+                    State.visMode = 'neural';
+                    State.currentScale = State.scales.neutral;
+                }
+            } catch (e) {
+                hudMood.innerText = "✨ Connection to Neural Oracle lost. Using local fallback.";
+            } finally {
+                State.isGenerating = false;
+                hudMood.classList.remove('loading-shimmer');
+            }
+        }
+
+        async function sonicOracle() {
+            const btn = document.getElementById('oracle-btn');
+            const originalText = btn.innerHTML;
+            btn.innerHTML = "✨ LISTENING...";
+            btn.disabled = true;
+
+            const prompt = `Act as the "Sonic Oracle". Based on:
+            Weather: ${State.weather.temp}C, ${State.weather.wind}kmh. 
+            World Mood: ${hudMood.innerText}.
+            Generate a 2-sentence poetic forecast. Say it in a whisper-like, calm, mysterious voice.`;
+
+            try {
+                const result = await geminiFetch({
+                    contents: [{ parts: [{ text: prompt }] }],
+                    generationConfig: { 
+                        responseModalities: ["AUDIO"],
+                        speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: "Puck" } } }
+                    },
+                    model: "gemini-2.5-flash-preview-tts"
+                }, "gemini-2.5-flash-preview-tts");
+
+                const base64Audio = result.candidates[0].content.parts[0].inlineData.data;
+                playPCM(base64Audio);
+            } catch (e) {
+                console.error(e);
+            } finally {
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+            }
+        }
+
+        function playPCM(base64) {
+            const binaryString = atob(base64);
+            const len = binaryString.length;
+            const bytes = new Uint8Array(len);
+            for (let i = 0; i < len; i++) bytes[i] = binaryString.charCodeAt(i);
+            
+            // Standard WAV header for 24kHz Mono PCM16
+            const sampleRate = 24000;
+            const wavHeader = new Uint8Array(44);
+            const view = new DataView(wavHeader.buffer);
+            view.setUint32(0, 0x52494646, false); view.setUint32(4, 36 + len, true);
+            view.setUint32(8, 0x57415645, false); view.setUint32(12, 0x666d7420, false);
+            view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
+            view.setUint32(24, sampleRate, true); view.setUint32(28, sampleRate * 2, true);
+            view.setUint16(32, 2, true); view.setUint16(34, 16, true);
+            view.setUint32(36, 0x64617461, false); view.setUint32(40, len, true);
+
+            const blob = new Blob([wavHeader, bytes], { type: 'audio/wav' });
+            const url = URL.createObjectURL(blob);
+            const audio = new Audio(url);
+            audio.play();
+        }
+
+        // --- CORE LOGIC ---
+
         document.getElementById('speed-control').addEventListener('input', (e) => {
             const val = e.target.value;
             document.documentElement.style.setProperty('--ticker-duration', `${val}s`);
@@ -286,6 +428,9 @@
         document.getElementById('evolution-control').addEventListener('input', (e) => {
             State.mutationSpeed = parseFloat(e.target.value) / 100;
         });
+
+        document.getElementById('synth-btn').addEventListener('click', synthesizeWorldState);
+        document.getElementById('oracle-btn').addEventListener('click', sonicOracle);
 
         function adjustParticleCount() {
             if (particles.length < State.particleCount) {
@@ -333,32 +478,11 @@
                 State.weather = { temp: wData.current_weather.temperature, wind: wData.current_weather.windspeed };
                 document.getElementById('weather-text').innerText = `${State.weather.temp}°C / ${State.weather.wind} KMH`;
                 
-                processState();
                 tickerContent.innerHTML = State.news.join(' <span class="mx-24 opacity-20">—</span> ');
+                
+                // Initial AI Synthesize after data is loaded
+                synthesizeWorldState();
             } catch (e) { console.log(e); }
-        }
-
-        function processState() {
-            const txt = State.news.join(" ").toLowerCase();
-            const pos = ['peace', 'discovery', 'new', 'rise', 'deal', 'future'];
-            const neg = ['war', 'crisis', 'threat', 'crash', 'fears', 'tension'];
-            let score = 0;
-            pos.forEach(w => { if(txt.includes(w)) score++; });
-            neg.forEach(w => { if(txt.includes(w)) score--; });
-            State.sentiment = score / 5;
-
-            const moodEl = document.getElementById('hud-mood');
-            if (State.sentiment > 0.5) {
-                State.targetHue = 190; State.visMode = 'flow';
-                moodEl.innerText = "Coherent harmony. Fluid motion active.";
-            } else if (State.sentiment < -0.5) {
-                State.targetHue = 350; State.visMode = 'geometric';
-                moodEl.innerText = "Systematic dissonance. Structural rigidity.";
-            } else {
-                State.targetHue = 240; State.visMode = 'neural';
-                moodEl.innerText = "Balanced telemetry. Standard neural sync.";
-            }
-            State.speedMult = 0.4 + (State.weather.wind * 0.05);
         }
 
         class Agent {
